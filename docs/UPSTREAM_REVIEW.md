@@ -7,9 +7,9 @@
 - fork：https://github.com/xiatian410/PyQtScrcpy
 - upstream：https://github.com/Stardawn0v0/PyQtScrcpy
 - 双方 main：`80dfd95e5c5445cbd6131d75c8ea6e6e95b437b2`，比较结果 identical（ahead 0 / behind 0）。
-- 当前本地开发分支：`feat/modernize-components`。
+- 当前本地开发分支：`2.0.0-dev`。
 - 上游只有一个 PR（#7，open）；未发现其他待整合分支差异。
-- 这里的“整合”指本地适配实现，未向 GitHub 推送，也未修改上游 issue / PR 状态。
+- 这里的“整合”指本地适配实现，已同步至 xiatian410/PyQtScrcpy 的 `2.0.0-dev` 分支；未修改源项目 issue / PR 状态。
 
 ## Issue / PR 处理
 

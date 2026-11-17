@@ -36,6 +36,6 @@
 
 ## 待真实环境验收
 
-`adb devices -l` 为空，本机没有 Android 设备。因此没有宣称真实 USB/无线投屏、控制、音视频录制、APK 安装、摄像头或虚拟显示已成功。Windows/macOS 的 CI 配置已写好，但此任务没有推送远端，尚无远端 CI 运行结果。Windows DLL 仅完成官方包校验与更新，没有在 Windows 执行。
+`adb devices -l` 为空，本机没有 Android 设备。因此没有宣称真实 USB/无线投屏、控制、音视频录制、APK 安装、摄像头或虚拟显示已成功。Windows/macOS 的 CI 配置已写好，但代码已同步至远端并触发 CI；跨平台结果以 GitHub Actions 的具体运行记录为准，不据此宣称通过。Windows DLL 仅完成官方包校验与更新，没有在 Windows 执行。
 
 Linux offscreen 不代表 X11/Wayland 桌面、多屏 DPI 或 Windows 拖动体验已经验收。Linux 构建使用当前系统 glibc，不能据此承诺在更旧发行版运行。正式发布前按 ROADMAP 的 P0 矩阵验收。
