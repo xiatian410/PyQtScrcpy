@@ -1,4 +1,4 @@
-from PyQt5.QtCore import Qt
+from PyQt6.QtCore import Qt
 from qfluentwidgets import InfoBar, InfoBarPosition
 
 
@@ -13,7 +13,7 @@ def info_bar(MainWindow, title, content, style='o', timeout=5000, closeable=True
         InfoBar.success(
             title=title,
             content=content,
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=closeable,
             position=position,
             duration=timeout,
@@ -23,7 +23,7 @@ def info_bar(MainWindow, title, content, style='o', timeout=5000, closeable=True
         InfoBar.error(
             title=title,
             content=content,
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=closeable,
             position=position,
             duration=timeout,
@@ -33,7 +33,7 @@ def info_bar(MainWindow, title, content, style='o', timeout=5000, closeable=True
         InfoBar.warning(
             title=title,
             content=content,
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=closeable,
             position=position,
             duration=timeout,
@@ -43,7 +43,7 @@ def info_bar(MainWindow, title, content, style='o', timeout=5000, closeable=True
         InfoBar.info(
             title=title,
             content=content,
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=closeable,
             position=position,
             duration=timeout,

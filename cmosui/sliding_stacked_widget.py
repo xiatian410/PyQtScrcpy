@@ -1,13 +1,13 @@
-from PyQt5.QtWidgets import QStackedWidget, QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, QPoint, QParallelAnimationGroup, QAbstractAnimation, Qt
+from PyQt6.QtWidgets import QStackedWidget, QWidget, QGraphicsOpacityEffect
+from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QPoint, QParallelAnimationGroup, QAbstractAnimation, Qt
 
 
 class SlidingStackedWidget(QStackedWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.m_direction = Qt.Horizontal
+        self.m_direction = Qt.Orientation.Horizontal
         self.m_speed = 500
-        self.m_animationType = QEasingCurve.OutCubic
+        self.m_animationType = QEasingCurve.Type.OutCubic
         self.m_now = 0
         self.m_next = 0
         self.m_wrap = False
@@ -17,9 +17,9 @@ class SlidingStackedWidget(QStackedWidget):
 
     def setDirection(self, direction):
         """
-        设为Qt.Horizontal或Qt.Vertical
-        Qt.Horizontal:水平
-        Qt.Vertical:垂直
+        设为Qt.Orientation.Horizontal或Qt.Orientation.Vertical
+        Qt.Orientation.Horizontal:水平
+        Qt.Orientation.Vertical:垂直
         :param direction:
         :return:
         """
@@ -55,13 +55,13 @@ class SlidingStackedWidget(QStackedWidget):
             self.m_active = False
             return
 
-        if self.m_direction == Qt.Horizontal:
+        if self.m_direction == Qt.Orientation.Horizontal:
             offset = QPoint(self.frameRect().width(), 0)
         else:
             offset = -QPoint(0, self.frameRect().height())  # 使用高度作为垂直偏移
 
         self.widget(_next).setGeometry(self.frameRect())
-        if _now < _next and self.m_direction == Qt.Horizontal:
+        if _now < _next and self.m_direction == Qt.Orientation.Horizontal:
             offset = -offset
         pnext = self.widget(_next).pos()
         pnow = self.widget(_now).pos()
@@ -71,7 +71,9 @@ class SlidingStackedWidget(QStackedWidget):
         self.widget(_next).show()
         self.widget(_next).raise_()
 
-        self.m_animationGroup = QParallelAnimationGroup(finished=self.animationDoneSlot)
+        self.m_animationGroup.deleteLater()
+        self.m_animationGroup = QParallelAnimationGroup(self)
+        self.m_animationGroup.finished.connect(self.animationDoneSlot)
 
         for index, start, end in zip((_now, _next), (pnow, pnext - offset), (pnow + offset, pnext)):
             animation = QPropertyAnimation(self.widget(index), b"pos")
@@ -84,7 +86,7 @@ class SlidingStackedWidget(QStackedWidget):
         self.m_next = _next
         self.m_now = _now
         self.m_active = True
-        self.m_animationGroup.start(QAbstractAnimation.DeleteWhenStopped)
+        self.m_animationGroup.start(QAbstractAnimation.DeletionPolicy.KeepWhenStopped)
 
     def animationDoneSlot(self):
         self.setCurrentIndex(self.m_next)

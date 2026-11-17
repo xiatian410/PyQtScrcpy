@@ -1,393 +1,525 @@
+"""PyQtScrcpy desktop application. All widget access stays on the Qt thread."""
 import datetime
 import os
-import platform
+from pathlib import Path
 import sys
-import re
-import subprocess
-import threading
 import traceback
 
-from PyQt5 import QtGui
-from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QSize, QEasingCurve, Qt, QTranslator, QLocale
-from PyQt5.QtWidgets import QApplication, QWidget, QFileDialog
-from qfluentwidgets import MessageBox
-from qframelesswindow import AcrylicWindow, StandardTitleBar, FramelessWindow
+from PyQt6 import QtGui
+from PyQt6.QtCore import (QObject, QRunnable, QThreadPool, QSettings, QTimer,
+                          QProcess, Qt, pyqtSignal, QLocale, QProcessEnvironment)
+from PyQt6.QtWidgets import (QApplication, QFileDialog, QDialog, QFormLayout,
+                             QDialogButtonBox, QLineEdit, QPlainTextEdit, QVBoxLayout, QHBoxLayout)
+from qfluentwidgets import MessageBox, PushButton, CheckBox, LineEdit, ComboBox
+from qframelesswindow import FramelessWindow, StandardTitleBar
 
+import backend
 import util
-from consts import *
+import res_rc  # Register application resources; pyuic6 does not emit this import.
+from consts import DATA_PATH, TOOL_AUTHOR, TOOL_NAME, TOOL_VERSION
+from i18n import EnglishTranslator
 from info_bar import info_bar
 from mainWindow import Ui_Form
-from cmosui import tip
-
-os.environ['PATH'] += os.pathsep + os.pathsep.join([os.path.join(BASEDIR, name) for name in os.listdir(BASEDIR)])
 
 
-class titleBar(StandardTitleBar):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.maxBtn.hide()
-        self.titleLabel.setStyleSheet("""
-                    QLabel{
-                        background: transparent;
-                        font: 13px 'Microsoft YaHei';
-                        padding: 0 4px;
-                        text-antialiasing: true;
-                    }
-                """)
+class TaskSignals(QObject):
+    finished = pyqtSignal(object, object, object)
 
 
-class MainWindow(FramelessWindow if 'Windows-10' in platform.platform() else AcrylicWindow, Ui_Form):
-    infoBar = pyqtSignal(str, str, str, int)
-    error_signal = pyqtSignal(str)
-    refresh_signal = pyqtSignal()
-    slide_pro_page = pyqtSignal(QWidget)
-
-    def __init__(self):
+class Task(QRunnable):
+    def __init__(self, function, callback):
         super().__init__()
-        self.pro_mode = False
-        self.setTitleBar(titleBar(self))
-        self.camera_info = None
-        self.video_source = 'screen'
-        self.setupUi(self)
-        self.resize(self.minimumWidth(), self.height())
-        self.previous_size = self.size()
-
-        if isinstance(self, AcrylicWindow):
-            self.windowEffect.setMicaEffect(self.winId())
-
-        self.setWindowTitle(f'{TOOL_NAME} {TOOL_VERSION}')
-        self.setWindowIcon(QtGui.QIcon(":/icon/res/logo.png"))
-        self.titleBar.raise_()
-
-        sys.excepthook = self.custom_except_hook
-        threading.excepthook = lambda args: self.custom_except_hook(args.exc_type, args.exc_value, args.exc_traceback)
-
-        self.infoBar.connect(
-            lambda title, content, style, timeout: info_bar(self, title, content if self.pro_mode else '', style,
-                                                            timeout, position='↑' if self.pro_mode else '↓'))
-        self.orientation.addItems(['0°', '90°', '180°', '270°'])
-        self.video_source_switcher.addItem(
-            routeKey='screen',
-            text='设备屏幕',
-            onClick=lambda: self.video_source_stacked.slideInWgt(self.screen_page),
-        )
-        self.video_source_switcher.addItem(
-            routeKey='camera',
-            text='摄像头',
-            onClick=lambda: self.video_source_stacked.slideInWgt(self.camera_page),
-        )
-        self.video_source_switcher.setCurrentItem('screen')
-        self.video_source_stacked.setCurrentIndex(0)
-        self.video_bit_slider.valueChanged.connect(self.update_video_bitrate)
-        self.audio_bit_slider.valueChanged.connect(self.update_audio_bitrate)
-
-        self.get_devices_btn.clicked.connect(self.get_devices)
-        self.restart_adb_btn.clicked.connect(self.restart_adb)
-        self.camera_ids.currentIndexChanged.connect(self.on_camera_id_change)
-        self.camera_sizes.currentIndexChanged.connect(self.on_camera_size_change)
-        self.choice_record_output_path.clicked.connect(
-            lambda: self.record_output_path.setText(QFileDialog.getExistingDirectory(self, '选择保存路径')))
-        self.run_scrcpy.clicked.connect(self.run)
-        self.install_pyqtscrcpy.clicked.connect(
-            lambda: tip(self, self.install_pyqtscrcpy, '这个功能还没做完', '', 'Warning', True, 5000))
-        self.abort_pyqtscrcpy.clicked.connect(
-            lambda: tip(self, self.abort_pyqtscrcpy, '这个功能还没做完', '', 'Warning', True, 5000))
-        self.devices_manager.clicked.connect(lambda: os.startfile('devmgmt.msc'))
-
-        self.video_source_switcher.currentItemChanged.connect(self.on_video_source_change)
-        self.adb_devices.itemSelectionChanged.connect(self.on_device_selection_changed)
-        self.video_source_stacked.currentChanged.connect(self.audio_source_mic.setChecked)
-        self.video_source_stacked.currentChanged.connect(lambda x: self.audio_source_output.setChecked(not x))
-
-        self.animation = QPropertyAnimation(self, b"size")
-        self.animation.setDuration(300)
-        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
-        self.pro_page.clicked.connect(self.toggle_window_size)
-
-        self.error_signal.connect(self.on_error)
-        self.refresh_signal.connect(self.refresh_pro_page)
-        self.slide_pro_page.connect(lambda w: self.pro_page_stacked.slideInWgt(w))
+        self.function, self.callback = function, callback
+        self.signals = TaskSignals()
 
     def run(self):
-        args = []
-        if self.stay_awake.isChecked():
-            args.append('--stay-awake')
-        if self.turn_screen_off.isChecked():
-            args.append('--turn-screen-off')
-        if self.power_off_on_close.isChecked():
-            args.append('--power-off-on-close')
-        if self.no_control.isChecked():
-            args.append('--no-control')
-        if self.enable_record.isChecked():
-            if not os.path.isdir(self.record_output_path.text()):
-                tip(self, self.record_output_path, '请选择保存路径', '', 'Error', True, 5000)
-                return
-            args.append(f'--record="{self.record_output_path.text()}"')
-            if self.record_time_limit.isChecked():
-                if seconds := util.time_to_seconds(self.record_limit_edit.text()):
-                    args.append(f'--time-limit={seconds}')
-                else:
-                    tip(self, self.record_limit_edit, '请输入正确的时间格式', '', 'Error', True, 5000)
-                    return
+        try:
+            result, error = self.function(), None
+        except Exception as exc:
+            result, error = None, str(exc)
+        self.signals.finished.emit(self.callback, result, error)
 
-            if self.no_playback.isChecked():
-                args.append('--no-playback')
 
+class MainWindow(FramelessWindow, Ui_Form):
+    def __init__(self):
+        super().__init__()
+        self.settings = QSettings('PyQtScrcpy', 'PyQtScrcpy')
+        self.language = self.settings.value('language', 'zh' if QLocale.system().name().startswith('zh') else 'en')
+        self.translator = EnglishTranslator(self)
+        if self.language == 'en':
+            QApplication.instance().installTranslator(self.translator)
+        self.pool = QThreadPool(self)
+        self.pool.setMaxThreadCount(4)
+        self.tasks = set()
+        self.processes = set()
+        self.camera_info = {}
+        self.video_source = 'screen'
+        self.query_generation = 0
+        self.busy_count = 0
+        self.setupUi(self)
+        self.setTitleBar(StandardTitleBar(self))
+        self.titleBar.maxBtn.hide()
+        self.titleBar.raise_()
+        # QPixmap eagerly loads the registered resource, including on headless Qt.
+        self.setWindowIcon(QtGui.QIcon(QtGui.QPixmap(':/icon/res/logo.png')))
+        self.pro_page.setIcon(QtGui.QIcon())
+        self.pro_page.setText('☰')
+        self.pro_page.setToolTip(self.t('高级设置', 'Advanced settings'))
+        self.setWindowTitle(f'{TOOL_NAME} {TOOL_VERSION}')
+        self.orientation.addItems(['0°', '90°', '180°', '270°'])
+        for key, zh, en in [('screen', '设备屏幕', 'Screen'), ('camera', '摄像头', 'Camera')]:
+            self.video_source_switcher.addItem(routeKey=key, text=self.t(zh, en))
+        self.video_source_switcher.setCurrentItem('screen')
+        self.video_source_stacked.setCurrentIndex(0)
+        self.video_source_switcher.currentItemChanged.connect(self.on_video_source_change)
+        self.get_devices_btn.clicked.connect(self.get_devices)
+        self.restart_adb_btn.clicked.connect(self.restart_adb)
+        self.adb_devices.itemSelectionChanged.connect(self.refresh_pro_page)
+        self.camera_ids.currentIndexChanged.connect(self.on_camera_id_change)
+        self.camera_sizes.currentIndexChanged.connect(self.on_camera_size_change)
+        self.choice_record_output_path.clicked.connect(self.choose_record_folder)
+        self.run_scrcpy.clicked.connect(self.run)
+        self.pro_page.clicked.connect(self.toggle_pro)
+        self.video_bit_slider.valueChanged.connect(self.update_video_bitrate)
+        self.audio_bit_slider.valueChanged.connect(self.update_audio_bitrate)
+        self.abort_pyqtscrcpy.clicked.connect(self.about)
+        self.install_pyqtscrcpy.clicked.connect(self.component_versions)
+        self.devices_manager.setVisible(sys.platform == 'win32')
+        self.devices_manager.clicked.connect(self.open_device_manager)
+        self.add_controls()
+        self.record_output_path.setText(self.settings.value('record_folder', str(Path.home())))
+        self.relabel()
+        self.toggle_pro()
+        QTimer.singleShot(0, self.get_devices)
+
+    def t(self, zh, en):
+        return zh if self.language == 'zh' else en
+
+    def notify(self, title, content='', style='i'):
+        info_bar(self, title, content, style, 7000, position='↓')
+
+    def submit(self, function, callback, busy=False):
+        task = Task(function, callback)
+        self.tasks.add(task)
+        if busy:
+            self.busy_count += 1
+            self.devices_card.setEnabled(False)
+        # Receiver is a QObject slot on the GUI thread, even when task finishes instantly.
+        task.signals.finished.connect(self.task_finished)
+        task.busy = busy
+        self.pool.start(task)
+
+    def task_finished(self, callback, result, error):
+        sender = self.sender()
+        task = next((t for t in self.tasks if t.signals is sender), None)
+        if task:
+            if task.busy:
+                self.busy_count -= 1
+                self.devices_card.setEnabled(self.busy_count == 0)
+            self.tasks.discard(task)
+        callback(result, error)
+
+    def selected_serial(self):
+        items = self.adb_devices.selectedItems()
+        return items[0].data(Qt.ItemDataRole.UserRole) if items else ''
+
+    def require_serial(self):
+        serial = self.selected_serial()
+        if not serial:
+            self.notify(self.t('请先选择设备', 'Select a device first'), style='w')
+        return serial
+
+    def add_controls(self):
+        self.install_apk_btn = PushButton(self.devices_card)
+        self.wireless_btn = PushButton(self.devices_card)
+        actions = QHBoxLayout()
+        actions.addWidget(self.install_apk_btn)
+        actions.addWidget(self.wireless_btn)
+        self.verticalLayout.insertLayout(1, actions)
+        self.install_apk_btn.clicked.connect(self.install_apk)
+        self.wireless_btn.clicked.connect(self.wireless_dialog)
+        self.language_box = ComboBox(self)
+        self.language_box.addItems(['简体中文', 'English'])
+        self.language_box.setCurrentIndex(0 if self.language == 'zh' else 1)
+        self.horizontalLayout_13.addWidget(self.language_box)
+        self.language_box.currentIndexChanged.connect(self.change_language)
+        self.logs_btn = PushButton(self)
+        self.horizontalLayout_13.addWidget(self.logs_btn)
+        self.logs_btn.clicked.connect(self.show_logs)
+        self.virtual_display = CheckBox(self.screen_page)
+        self.virtual_size = LineEdit(self.screen_page)
+        self.virtual_size.setPlaceholderText('1920x1080/420')
+        self.virtual_app = LineEdit(self.screen_page)
+        self.virtual_app.setPlaceholderText('org.mozilla.firefox')
+        self.virtual_keep = CheckBox(self.screen_page)
+        self.virtual_decorations = CheckBox(self.screen_page)
+        self.virtual_decorations.setChecked(True)
+        for widget in [self.virtual_display, self.virtual_size, self.virtual_app, self.virtual_keep, self.virtual_decorations]:
+            self.verticalLayout_13.addWidget(widget)
+        self.virtual_display.toggled.connect(self.toggle_virtual)
+        self.toggle_virtual(False)
+        self.log_dialog = QDialog(self)
+        self.log_dialog.resize(800, 480)
+        layout = QVBoxLayout(self.log_dialog)
+        self.log_view = QPlainTextEdit(self.log_dialog)
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(3000)
+        layout.addWidget(self.log_view)
+
+    def relabel(self):
+        self.install_apk_btn.setText(self.t('安装 APK', 'Install APK'))
+        self.wireless_btn.setText(self.t('无线连接', 'Wireless'))
+        self.logs_btn.setText(self.t('运行日志', 'Logs'))
+        self.install_pyqtscrcpy.setText(self.t('组件版本', 'Component versions'))
+        self.virtual_display.setText(self.t('创建虚拟显示', 'Create virtual display'))
+        self.virtual_keep.setText(self.t('关闭后保留应用', 'Keep apps on close'))
+        self.virtual_decorations.setText(self.t('显示系统装饰', 'System decorations'))
+        self.virtual_size.setToolTip(self.t('尺寸/DPI；留空使用主屏幕参数', 'Size/DPI; empty uses main display settings'))
+        self.virtual_app.setToolTip(self.t('启动应用包名（可留空）', 'App package to start (optional)'))
+        self.video_source_switcher.setItemText('screen', self.t('设备屏幕', 'Screen'))
+        self.video_source_switcher.setItemText('camera', self.t('摄像头', 'Camera'))
+        self.log_dialog.setWindowTitle(self.t('Scrcpy 运行日志', 'Scrcpy logs'))
+        self.label_6.setText(self.t('摄像头捕获需要 Android 12+', 'Camera capture requires Android 12+'))
+        self.enable_video.setToolTip('--no-video')
+        self.enable_audio.setToolTip('--no-audio')
+        self.setWindowTitle(f'{TOOL_NAME} {TOOL_VERSION}')
+
+    def change_language(self, index):
+        self.language = 'zh' if index == 0 else 'en'
+        self.settings.setValue('language', self.language)
+        app = QApplication.instance()
+        if index:
+            app.installTranslator(self.translator)
+        else:
+            app.removeTranslator(self.translator)
+        # Designer retranslation also contains value labels: preserve user values.
+        video, audio = self.video_bit.text(), self.audio_bit.text()
+        self.retranslateUi(self)
+        self.video_bit.setText(video)
+        self.audio_bit.setText(audio)
+        self.relabel()
+        self.toggle_pro()
+
+    def toggle_virtual(self, enabled):
+        self.enable_target_screen.setEnabled(not enabled)
+        for w in [self.virtual_size, self.virtual_app, self.virtual_keep, self.virtual_decorations]:
+            w.setEnabled(enabled)
+
+    def toggle_pro(self):
+        self.pro_page_stacked.setVisible(self.pro_page.isChecked())
+        self.setMaximumWidth(1250 if self.pro_page.isChecked() else 450)
+        self.resize(1250 if self.pro_page.isChecked() else 450, 720)
         if self.pro_page.isChecked():
-            if self.enable_video.isChecked():
-                if self.enable_orientation.isChecked():
-                    args.append(f'--orientation={self.orientation.currentText().replace('°', '')}')
-                args.append(f'--display-buffer={self.video_buffer.text()}')
-                if self.enable_max_fps.isChecked():
-                    args.append(f'--max-fps={self.max_fps.text()}')
-                if self.video_source == 'screen':
-                    if self.enable_target_screen.isChecked():
-                        args.append(f'--display-id={self.target_screen.currentText()}')
-                    if self.enable_max_size.isChecked():
-                        args.append(f'--max-size={self.max_size.text()}')
-                elif self.video_source == 'camera':
-                    args.append('--video-source=camera')
-                    args.append(f'--camera-id={self.camera_ids.currentText()}')
-                    args.append(f'--camera-size={self.camera_sizes.currentText().replace('[高速]', '')}')
-                    args.append(f'--camera-fps={self.camera_fps.currentText()}')
-                if self.video_h264.isChecked():
-                    args.append('--video-codec=h264')
-                elif self.video_h265.isChecked():
-                    args.append('--video-codec=h265')
-                elif self.video_av1.isChecked():
-                    args.append('--video-codec=av1')
-                args.append(f'--video-bit-rate={util.convert_bitrate(self.video_bit.text())}')
-            else:
-                args.append('--no-video')
-
-            if self.enable_audio.isChecked():
-                if self.audio_source_output.isChecked():
-                    args.append('--audio-source=output')
-                elif self.audio_source_mic.isChecked():
-                    args.append('--audio-source=mic')
-                args.append(f'--audio-buffer={self.audio_buffer.text()}')
-                if self.audio_opus.isChecked():
-                    args.append('--audio-codec=opus')
-                elif self.audio_aac.isChecked():
-                    args.append('--audio-codec=aac')
-                elif self.audio_flac.isChecked():
-                    args.append('--audio-codec=flac')
-                args.append(f'--audio-bit-rate={util.convert_bitrate(self.audio_bit.text())}')
-            else:
-                args.append('--no-audio')
-
-        if self.enable_cust_port.isChecked():
-            args.append(f'--tunnel-port={self.cust_port.text()}')
-
-        if self.tcpip_connect.isChecked():
-            args.append('--tcpip')
-
-        args, invalid_args = util.check_args(args)
-        if 'Windows' in platform.system():
-            cmd = f'start cmd /c "{SCRCPY} {" ".join(args)} || echo. & echo.\033[31m\033[1m---Scrcpy进程已结束 按任意键关闭窗口---\033[0m & pause>nul"'
-        else:
-            cmd = f'{SCRCPY} {" ".join(args)}'
-
-        status = subprocess.getoutput(f'{ADB} shell getprop persist.security.adbinput')
-        if '0' in status:
-            w = MessageBox('所需设置项未启用', '目标设备似乎未解除ADB Input限制，例如“USB调试（安全设置）”。\n在解除此限制前可能无法在PC端对目标设备进行控制', self)
-            w.cancelButton.hide()
-            w.yesButton.setText('确认')
-            w.exec()
-
-        subprocess.Popen(cmd, shell=True, creationflags=CREATE_NEW_CONSOLE, cwd=BASEDIR)
-
-    def refresh_pro_page(self):
-        self.slide_pro_page.emit(self.refresh_page)
-
-        def _():
-            self.load_camera_ids()
-            self.load_screen_ids()
-            self.slide_pro_page.emit(self.main_pro_page)
-
-        threading.Thread(target=_, daemon=True).start()
-
-    def custom_except_hook(self, exc_type, exc_value, exc_traceback):
-        if isinstance(exc_value, UnicodeDecodeError) or 'UnicodeDecodeError' in str(exc_value):
-            # 如果异常是UnicodeDecodeError，发送特定的错误消息
-            cwd_path = os.getcwd()
-            if re.search(r'[\u4e00-\u9fff]', cwd_path):
-                output = f"当前工作目录为：\n{cwd_path}\n请将工具文件移动至无中文字符的路径下并重启工具。"
-            else:
-                output = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-            error_message = f"检测到编码错误：\n{output}"
-            self.error_signal.emit(error_message)
-        elif isinstance(exc_value, RuntimeError) or 'RuntimeError' in str(exc_value):
-            return
-        else:
-            # 其他类型的错误处理
-            formatted_traceback = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-            self.error_signal.emit(formatted_traceback)
-
-    def on_error(self, output):
-        output = f'{TOOL_VERSION}\n{output}\n'
-        with open('error.log', 'w') as f:
-            output = f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]\n{output}'
-            f.write(output)
-        w = MessageBox('程序发生错误', output, self)
-        w.cancelButton.hide()
-        QApplication.clipboard().setText(output)
-        w.yesButton.setText('确认')
-        w.yesButton.clicked.connect(lambda: QApplication.clipboard().setText(output))
-        w.exec()
-
-    def on_device_selection_changed(self):
-        self.refresh_signal.emit()
-        selected_items = self.adb_devices.selectedItems()
-        if selected_items:
-            selected_device = selected_items[0].text()
-            device_serial = selected_device.split(" | ")[-1]
-            os.environ["ANDROID_SERIAL"] = device_serial
-        else:
-            os.environ.pop("ANDROID_SERIAL", None)
-
-    def restart_adb(self):
-        self.devices_card.setDisabled(True)
-
-        def _():
-            subprocess.run(f'{ADB} kill-server', shell=True, creationflags=CREATE_NO_WINDOW)
-            subprocess.run(f'{ADB} start-server', shell=True, creationflags=CREATE_NO_WINDOW)
-            self.devices_card.setDisabled(False)
-
-            self.get_devices()
-
-        threading.Thread(target=_, daemon=True).start()
+            self.refresh_pro_page()
 
     def get_devices(self):
-        self.devices_card.setDisabled(True)
-
-        def _():
-            devices, unauthorized_devices, offline_devices = util.devices()
+        previous = self.selected_serial()
+        def done(result, error):
+            if error:
+                self.notify(self.t('设备查询失败', 'Device discovery failed'), error, 'e')
+                return
+            connected, unauthorized, offline = result
+            self.adb_devices.blockSignals(True)
             self.adb_devices.clear()
-            if devices:
-                self.adb_devices.addItems([f"{name} | {serial}" for serial, name in devices.items()])
-            elif unauthorized_devices:
-                self.infoBar.emit(f'发现了{len(unauthorized_devices)}个未授权设备', '、'.join(unauthorized_devices), 'w',
-                                  5000)
-            elif offline_devices:
-                self.infoBar.emit(f'发现了{len(offline_devices)}个离线设备', '、'.join(offline_devices), 'w', 5000)
-            else:
-                self.infoBar.emit('未发现设备', '请检查设备是否正常连接', 'e', 5000)
-            self.devices_card.setDisabled(False)
+            for serial, model in connected.items():
+                self.adb_devices.addItem(f'{model} | {serial}')
+                item = self.adb_devices.item(self.adb_devices.count() - 1)
+                item.setData(Qt.ItemDataRole.UserRole, serial)
+                if serial == previous:
+                    self.adb_devices.setCurrentItem(item)
+            if not self.adb_devices.selectedItems() and len(connected) == 1:
+                self.adb_devices.setCurrentRow(0)
+            self.adb_devices.blockSignals(False)
+            self.refresh_pro_page()
+            if unauthorized or offline:
+                self.notify(self.t('设备需要处理', 'Devices need attention'),
+                            f'unauthorized: {", ".join(unauthorized)}; offline: {", ".join(offline)}', 'w')
+            elif not connected:
+                self.notify(self.t('未发现设备', 'No devices found'), self.t('连接设备并允许 USB 调试', 'Connect a device and allow USB debugging'), 'w')
+        self.submit(util.devices, done, busy=True)
 
-        threading.Thread(target=_, daemon=True).start()
+    def restart_adb(self):
+        def restart():
+            backend.run_tool('adb', ['kill-server'])
+            return backend.run_tool('adb', ['start-server'])
+        self.submit(restart, lambda result, error: self.operation_done(result, error, refresh=True), busy=True)
 
-    def on_video_source_change(self, item):
-        self.video_source = item
-        if item == 'screen':
-            self.enable_max_fps.setDisabled(False)
-        elif item == 'camera':
-            self.enable_max_fps.setDisabled(True)
-            self.enable_max_fps.setChecked(False)
+    def operation_done(self, result, error, refresh=False):
+        self.notify(self.t('操作失败', 'Operation failed') if error else self.t('操作成功', 'Success'), error or result or '', 'e' if error else 'o')
+        if refresh and not error:
+            self.get_devices()
 
-    def load_screen_ids(self):
-        self.target_screen.clear()
-        display_ids = util.get_display_ids()
-        self.target_screen.addItems([str(id) for id in display_ids])
-
-    def load_camera_ids(self):
+    def refresh_pro_page(self):
+        self.query_generation += 1
+        generation, serial = self.query_generation, self.selected_serial()
+        self.camera_info = {}
         self.camera_ids.clear()
-        self.camera_info = util.get_camera_sizes()
-        camera_ids = list(self.camera_info.keys())
-        self.camera_ids.addItems([str(id) for id in camera_ids])
+        self.camera_sizes.clear()
+        self.camera_fps.clear()
+        self.target_screen.clear()
+        if not serial or not self.pro_page.isChecked():
+            self.pro_page_stacked.setCurrentIndex(0)
+            return
+        self.pro_page_stacked.setCurrentWidget(self.refresh_page)
+        source = self.video_source
+        def query():
+            return util.get_camera_sizes(serial) if source == 'camera' else util.get_display_ids(serial)
+        def done(result, error):
+            if generation != self.query_generation or serial != self.selected_serial():
+                return
+            self.pro_page_stacked.setCurrentWidget(self.main_pro_page)
+            if error:
+                self.notify(self.t('配置查询失败', 'Configuration query failed'), error, 'w')
+            elif source == 'camera':
+                self.camera_info = result
+                self.camera_ids.addItems(list(result))
+            else:
+                self.target_screen.addItems(result)
+        self.submit(query, done)
+
+    def on_video_source_change(self, source):
+        self.video_source = source
+        self.video_source_stacked.setCurrentWidget(self.screen_page if source == 'screen' else self.camera_page)
+        self.audio_source_mic.setChecked(source == 'camera')
+        self.audio_source_output.setChecked(source == 'screen')
+        self.enable_max_fps.setEnabled(source == 'screen')
+        self.refresh_pro_page()
 
     def on_camera_id_change(self):
-        camera_id = int(self.camera_ids.currentText())
-        sizes = list(self.camera_info[camera_id].keys())
         self.camera_sizes.clear()
-        self.camera_sizes.addItems(sizes)
+        self.camera_sizes.addItems(list(self.camera_info.get(self.camera_ids.currentText(), {})))
 
     def on_camera_size_change(self):
-        camera_id = int(self.camera_ids.currentText())
-        size = self.camera_sizes.currentText()
-        fps_list = self.camera_info[camera_id][size]
         self.camera_fps.clear()
-        self.camera_fps.addItems(fps_list)
+        self.camera_fps.addItems(self.camera_info.get(self.camera_ids.currentText(), {}).get(self.camera_sizes.currentText(), []))
+
+    def choose_record_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, self.t('选择录屏目录', 'Recording folder'), self.record_output_path.text())
+        if folder:
+            self.record_output_path.setText(folder)
+            self.settings.setValue('record_folder', folder)
+
+    def build_args(self, serial):
+        args = [f'--serial={serial}']
+        for name in ['stay_awake', 'turn_screen_off', 'power_off_on_close', 'no_control', 'always_on_top']:
+            if getattr(self, name).isChecked():
+                args.append('--' + name.replace('_', '-'))
+        if self.enable_record.isChecked():
+            folder = Path(self.record_output_path.text()).expanduser()
+            if not folder.is_dir():
+                raise ValueError(self.t('请选择有效录屏目录', 'Choose an existing recording folder'))
+            filename = 'scrcpy-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.mkv'
+            args.append(f'--record={folder / filename}')
+            if self.record_time_limit.isChecked():
+                args.append(f'--time-limit={util.time_to_seconds(self.record_limit_edit.text())}')
+            if self.no_playback.isChecked():
+                args.append('--no-playback')
+        if self.pro_page.isChecked():
+            if not self.enable_video.isChecked() and not self.enable_audio.isChecked():
+                raise ValueError(self.t('至少启用视频或音频', 'Enable video or audio'))
+            if self.enable_video.isChecked():
+                if self.enable_orientation.isChecked():
+                    args.append('--display-orientation=' + self.orientation.currentText().replace('°', ''))
+                args.append(f'--video-buffer={self.video_buffer.value()}')
+                if self.video_source == 'screen':
+                    if self.enable_max_fps.isChecked():
+                        args.append('--max-fps=' + backend.integer(str(self.max_fps.value()), 'FPS', 1))
+                    if self.virtual_display.isChecked():
+                        args += backend.virtual_display_args(self.virtual_size.text(), self.virtual_app.text(), self.virtual_keep.isChecked(), self.virtual_decorations.isChecked())
+                    elif self.enable_target_screen.isChecked():
+                        args.append('--display-id=' + backend.integer(self.target_screen.currentText(), 'Display ID'))
+                    if self.enable_max_size.isChecked():
+                        args.append('--max-size=' + backend.integer(str(self.max_size.value()), 'Maximum size', 1))
+                else:
+                    if not self.camera_ids.currentText() or not self.camera_sizes.currentText():
+                        raise ValueError(self.t('请选择摄像头和分辨率', 'Select a camera and resolution'))
+                    args += ['--video-source=camera', '--camera-id=' + self.camera_ids.currentText(), '--camera-size=' + self.camera_sizes.currentText().split()[0], '--camera-fps=' + backend.integer(self.camera_fps.currentText(), 'Camera FPS', 1)]
+                    if '[high-speed]' in self.camera_sizes.currentText():
+                        args.append('--camera-high-speed')
+                codec = 'h265' if self.video_h265.isChecked() else 'av1' if self.video_av1.isChecked() else 'h264'
+                args += [f'--video-codec={codec}', f'--video-bit-rate={util.convert_bitrate(self.video_bit.text())}']
+            else:
+                args.append('--no-video')
+            if self.enable_audio.isChecked():
+                codec = 'aac' if self.audio_aac.isChecked() else 'flac' if self.audio_flac.isChecked() else 'opus'
+                source = 'mic' if self.audio_source_mic.isChecked() else 'output'
+                args += [f'--audio-source={source}', f'--audio-buffer={self.audio_buffer.value()}', f'--audio-codec={codec}']
+                if codec != 'flac':
+                    args.append(f'--audio-bit-rate={util.convert_bitrate(self.audio_bit.text())}')
+            else:
+                args.append('--no-audio')
+        if self.enable_cust_port.isChecked():
+            args.append('--tunnel-port=' + backend.integer(str(self.cust_port.value()), 'Port', 1, 65535))
+        if self.tcpip_connect.isChecked():
+            args.append('--tcpip')
+        return args
+
+    def run(self):
+        serial = self.require_serial()
+        if not serial:
+            return
+        try:
+            args = self.build_args(serial)
+        except ValueError as exc:
+            self.notify(self.t('参数错误', 'Invalid options'), str(exc), 'e')
+            return
+        self.run_scrcpy.setEnabled(False)
+        def prepare():
+            help_text = backend.run_tool('scrcpy', ['--help'])
+            backend.check_capabilities(help_text, args)
+            status = ''
+            if '--no-control' not in args:
+                status = backend.run_tool('adb', backend.adb_args(serial, 'shell', 'getprop', 'persist.security.adbinput'))
+            return backend.resolve_tool('scrcpy'), backend.tool_env(), status
+        def done(result, error):
+            self.run_scrcpy.setEnabled(True)
+            if error:
+                self.notify(self.t('无法启动', 'Unable to start'), error, 'e')
+                return
+            executable, env, status = result
+            if status.strip() == '0':
+                self.notify(self.t('设备限制输入控制', 'Device restricts input control'), self.t('请在设备开发者选项中启用 USB 调试（安全设置），然后重试。', 'Enable USB debugging (Security settings) in device developer options.'), 'w')
+            self.launch_scrcpy(executable, args, env)
+        self.submit(prepare, done)
+
+    def launch_scrcpy(self, executable, args, env):
+        process = QProcess(self)
+        process.setProgram(executable)
+        process.setArguments(args)
+        process.setWorkingDirectory(str(Path(executable).parent))
+        qenv = QProcessEnvironment()
+        for key, value in env.items():
+            qenv.insert(key, value)
+        process.setProcessEnvironment(qenv)
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        process.readyReadStandardOutput.connect(lambda: self.log_view.appendPlainText(bytes(process.readAllStandardOutput()).decode('utf-8', 'replace').rstrip()))
+        process.finished.connect(lambda code, status: self.process_finished(process, code))
+        process.errorOccurred.connect(lambda error: self.process_error(process, error))
+        self.processes.add(process)
+        self.log_view.appendPlainText(f'\n[{datetime.datetime.now().isoformat(timespec="seconds")}] {executable}\n{args!r}')
+        process.start()
+
+    def process_error(self, process, error):
+        self.notify(self.t('Scrcpy 进程错误', 'Scrcpy process error'), process.errorString(), 'e')
+        if error == QProcess.ProcessError.FailedToStart:
+            self.processes.discard(process)
+            process.deleteLater()
+
+    def process_finished(self, process, code):
+        self.processes.discard(process)
+        self.log_view.appendPlainText(f'Process exited: {code}')
+        if code:
+            self.notify(self.t('Scrcpy 已退出', 'Scrcpy exited'), self.t('请查看运行日志中的设备错误信息', 'Check the logs for device errors'), 'e')
+            self.show_logs()
+        process.deleteLater()
+
+    def install_apk(self):
+        serial = self.require_serial()
+        if not serial:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, self.t('选择 APK', 'Select APK'), '', 'APK (*.apk)')
+        if path:
+            self.submit(lambda: backend.install_apk(serial, path), self.operation_done, busy=True)
+
+    def wireless_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.t('无线调试', 'Wireless debugging'))
+        layout = QFormLayout(dialog)
+        endpoint, pair_endpoint, code = QLineEdit(dialog), QLineEdit(dialog), QLineEdit(dialog)
+        endpoint.setPlaceholderText('192.168.1.100:37000')
+        endpoint.setText(self.settings.value('wireless_endpoint', ''))
+        pair_endpoint.setPlaceholderText('192.168.1.100:37001')
+        code.setEchoMode(QLineEdit.EchoMode.Password)
+        code.setMaxLength(6)
+        layout.addRow(self.t('连接地址 IP:端口', 'Connect IP:port'), endpoint)
+        layout.addRow(self.t('配对地址（可选，端口通常不同）', 'Pair IP:port (optional, usually different)'), pair_endpoint)
+        layout.addRow(self.t('配对码（可选）', 'Pairing code (optional)'), code)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=dialog)
+        layout.addRow(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        target, pair_target, secret = endpoint.text(), pair_endpoint.text(), code.text()
+        code.clear()
+        try:
+            target = backend.validate_endpoint(target)
+            if pair_target or secret:
+                pair_target = backend.validate_endpoint(pair_target)
+                if len(secret) != 6 or not secret.isascii() or not secret.isdigit():
+                    raise ValueError(self.t('配对码必须为六位数字', 'Pairing code must contain six digits'))
+        except ValueError as exc:
+            self.notify(self.t('地址或配对码无效', 'Invalid endpoint or code'), str(exc), 'e')
+            return
+        self.settings.setValue('wireless_endpoint', target)
+        def connect():
+            if pair_target:
+                backend.pair_device(pair_target, secret)
+            return backend.connect_device(target)
+        self.submit(connect, lambda result, error: self.operation_done(result, error, refresh=True), busy=True)
+
+    def component_versions(self):
+        def query():
+            return '\n\n'.join(backend.run_tool(name, ['--version'] if name == 'scrcpy' else ['version']) for name in ['adb', 'scrcpy'])
+        self.submit(query, lambda result, error: self.message(self.t('组件版本', 'Component versions'), error or result))
+
+    def message(self, title, text):
+        box = MessageBox(title, text, self)
+        box.cancelButton.hide()
+        box.yesButton.setText('OK')
+        box.exec()
+
+    def about(self):
+        self.message(TOOL_NAME, f'{TOOL_VERSION}\n{TOOL_AUTHOR}\nGPL-3.0\nhttps://github.com/xiatian410/PyQtScrcpy\nUpstream: Stardawn0v0/PyQtScrcpy\nAPK feature: hansaes, upstream PR #7')
+
+    def show_logs(self):
+        self.log_dialog.show()
+        self.log_dialog.raise_()
+
+    def open_device_manager(self):
+        if sys.platform == 'win32':
+            os.startfile('devmgmt.msc')
 
     def update_audio_bitrate(self, value):
-        if value < 10:
-            bitrate = '32K'
-        elif 10 <= value < 20:
-            bitrate = '64K'
-        elif 20 <= value < 40:
-            bitrate = '128K'
-        elif 40 <= value < 60:
-            bitrate = '256K'
-        elif 60 <= value < 80:
-            bitrate = '512K'
-        elif 80 <= value < 95:
-            bitrate = '1M'
-        elif 95 <= value < 100:
-            bitrate = '2M'
-        else:
-            bitrate = '128K'
-
-        self.audio_bit.setText(bitrate)
+        choices = [(10, '32K'), (20, '64K'), (40, '128K'), (60, '256K'), (80, '512K'), (95, '1M'), (101, '2M')]
+        self.audio_bit.setText(next(text for limit, text in choices if value < limit))
 
     def update_video_bitrate(self, value):
-        if value == 0:
-            value = 1
-        if value >= 99:
-            value = 100
-        bitrate = value * 50
+        bitrate = max(1, value) * 50
+        self.video_bit.setText(f'{bitrate / 1000:.2f}M' if bitrate >= 1000 else f'{bitrate}K')
 
-        if bitrate < 1000:
-            unit = "K"
-        else:
-            bitrate /= 1000
-            unit = "M"
+    def closeEvent(self, event):
+        if self.tasks:
+            self.notify(self.t('任务仍在执行', 'Tasks are still running'), self.t('请等待操作结束后关闭窗口', 'Wait for the current operation to finish'), 'w')
+            event.ignore()
+            return
+        if self.processes:
+            box = MessageBox(self.t('结束投屏', 'Stop mirroring'), self.t('关闭窗口将结束正在运行的投屏。', 'Closing this window stops active mirroring sessions.'), self)
+            if not box.exec():
+                event.ignore()
+                return
+            for process in list(self.processes):
+                process.terminate()
+                if not process.waitForFinished(1000):
+                    process.kill()
+                    process.waitForFinished(1000)
+        super().closeEvent(event)
 
-        self.video_bit.setText(f"{bitrate:.2f} {unit}" if unit == "M" else f"{int(bitrate)} {unit}")
 
-    def toggle_window_size(self):
-        self.pro_mode = self.pro_page.isChecked()
-        self.animation.stop() if self.animation.state() == QPropertyAnimation.Running else None
-        page_size = QSize(800, 532) if self.pro_page.isChecked() else QSize(300, 532)
-        start_size = self.size()
-        self.animation.setStartValue(start_size)
-        self.animation.setEndValue(page_size)
-        self.animation.setDuration(300)
-        self.animation.start()
-        if self.pro_page.isChecked():
-            self.setWindowTitle(f'{TOOL_NAME} {TOOL_VERSION}  by {TOOL_AUTHOR}')
-        else:
-            self.setWindowTitle(f'{TOOL_NAME} {TOOL_VERSION}')
-
-    def resizeEvent(self, event):
-        current_size = event.size()
-        previous_size = self.previous_size
-
-        if current_size.width() > previous_size.width() and not self.animation.state() == QPropertyAnimation.Running:
-            self.pro_page.setChecked(True)
-        elif current_size.width() == previous_size.width() and not self.animation.state() == QPropertyAnimation.Running:
-            self.pro_page.setChecked(False)
-
-        super().resizeEvent(event)
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName(TOOL_NAME)
+    window = MainWindow()
+    def exception_hook(kind, value, tb):
+        output = ''.join(traceback.format_exception(kind, value, tb))
+        folder = Path(DATA_PATH)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'error.log').write_text(output, encoding='utf-8')
+        window.notify(window.t('程序发生错误', 'Application error'), str(value), 'e')
+    sys.excepthook = exception_hook
+    window.show()
+    return app.exec()
 
 
 if __name__ == '__main__':
-    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
-
-    app = QApplication(sys.argv)
-    translator = QTranslator()
-    translator.load(QLocale.system(), ':/i18n/media/qfluentwidgets.zh_CN.qm')
-    app.installTranslator(translator)
-
-    window = MainWindow()
-    window.show()
-
-    me = app.exec_()
-
-
-    class world:
-        execute = sys.exit
-
-
-    world.execute(me)
+    sys.exit(main())

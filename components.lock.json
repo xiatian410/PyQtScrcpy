@@ -1,0 +1,69 @@
+{
+  "checked_at": "2026-11-18",
+  "sources": {
+    "scrcpy": "https://github.com/Genymobile/scrcpy/releases/tag/v5.0.1",
+    "platform-tools": "https://dl.google.com/android/repository/repository2-3.xml"
+  },
+  "platforms": {
+    "windows-x86_64": {
+      "scrcpy": {
+        "version": "5.0.1",
+        "url": "https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-win64-v5.0.1.zip",
+        "sha256": "b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5"
+      },
+      "platform-tools": {
+        "version": "37.0.1",
+        "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip",
+        "sha256": "45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99"
+      }
+    },
+    "windows-arm64": {
+      "scrcpy": {
+        "version": "5.0.1",
+        "url": "https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-winarm64-v5.0.1.zip",
+        "sha256": "16c3fc2068df64946f670e3504b4752073ebae47a416a45b46e79a5ab19c689b"
+      },
+      "platform-tools": {
+        "version": "37.0.1",
+        "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip",
+        "sha256": "45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99"
+      }
+    },
+    "linux-x86_64": {
+      "scrcpy": {
+        "version": "5.0.1",
+        "url": "https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-linux-x86_64-v5.0.1.tar.gz",
+        "sha256": "9f969d30cc574816077edecda65719c1c70b0aee1df1ba5fa00779ac07b8fd6e"
+      },
+      "platform-tools": {
+        "version": "37.0.1",
+        "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip",
+        "sha256": "d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1"
+      }
+    },
+    "macos-x86_64": {
+      "scrcpy": {
+        "version": "5.0.1",
+        "url": "https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-macos-x86_64-v5.0.1.tar.gz",
+        "sha256": "31a5467a9e907f162b093267cbbab1276b15c6e709c2ea8159566a8d165beb50"
+      },
+      "platform-tools": {
+        "version": "37.0.1",
+        "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-darwin.zip",
+        "sha256": "ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d"
+      }
+    },
+    "macos-arm64": {
+      "scrcpy": {
+        "version": "5.0.1",
+        "url": "https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-macos-aarch64-v5.0.1.tar.gz",
+        "sha256": "33611e51977a8289e2e124b220f727895181ef2eb9060e0987a4dc2db9cf0d6b"
+      },
+      "platform-tools": {
+        "version": "37.0.1",
+        "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-darwin.zip",
+        "sha256": "ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d"
+      }
+    }
+  }
+}

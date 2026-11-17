@@ -6,20 +6,20 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
-    <height>532</height>
+    <width>1100</width>
+    <height>720</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
     <width>300</width>
-    <height>532</height>
+    <height>720</height>
    </size>
   </property>
   <property name="maximumSize">
    <size>
-    <width>800</width>
-    <height>532</height>
+    <width>1100</width>
+    <height>720</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -110,13 +110,13 @@ QLabel {background-color: transparent;}</string>
           <widget class="CardWidget" name="devices_card">
            <property name="minimumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>0</height>
             </size>
            </property>
            <property name="maximumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>16777215</height>
             </size>
            </property>
@@ -149,13 +149,13 @@ QLabel {background-color: transparent;}</string>
           <widget class="CardWidget" name="CardWidget_2">
            <property name="minimumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>0</height>
             </size>
            </property>
            <property name="maximumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>16777215</height>
             </size>
            </property>
@@ -240,13 +240,13 @@ QLabel {background-color: transparent;}</string>
            </property>
            <property name="minimumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>0</height>
             </size>
            </property>
            <property name="maximumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>16777215</height>
             </size>
            </property>
@@ -310,7 +310,7 @@ QLabel {background-color: transparent;}</string>
                </widget>
               </item>
               <item>
-               <widget class="CompactTimeEdit" name="record_limit_edit">
+               <widget class="QTimeEdit" name="record_limit_edit">
                 <property name="toolTip">
                  <string>--time-limit</string>
                 </property>
@@ -338,13 +338,13 @@ QLabel {background-color: transparent;}</string>
           <widget class="CardWidget" name="CardWidget_6">
            <property name="minimumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>0</height>
             </size>
            </property>
            <property name="maximumSize">
             <size>
-             <width>280</width>
+             <width>400</width>
              <height>16777215</height>
             </size>
            </property>
@@ -493,7 +493,7 @@ QLabel {background-color: transparent;}</string>
                     <number>5</number>
                    </property>
                    <item>
-                    <widget class="CompactSpinBox" name="video_buffer">
+                    <widget class="QSpinBox" name="video_buffer">
                      <property name="minimum">
                       <number>0</number>
                      </property>
@@ -530,7 +530,7 @@ QLabel {background-color: transparent;}</string>
                     <number>5</number>
                    </property>
                    <item>
-                    <widget class="CompactSpinBox" name="max_fps">
+                    <widget class="QSpinBox" name="max_fps">
                      <property name="minimum">
                       <number>1</number>
                      </property>
@@ -644,7 +644,7 @@ QLabel {background-color: transparent;}</string>
                              <number>5</number>
                             </property>
                             <item>
-                             <widget class="CompactSpinBox" name="max_size">
+                             <widget class="QSpinBox" name="max_size">
                               <property name="minimum">
                                <number>10</number>
                               </property>
@@ -970,7 +970,7 @@ QLabel {background-color: transparent;}</string>
                     <number>5</number>
                    </property>
                    <item>
-                    <widget class="CompactSpinBox" name="audio_buffer">
+                    <widget class="QSpinBox" name="audio_buffer">
                      <property name="minimum">
                       <number>0</number>
                      </property>
@@ -1159,7 +1159,7 @@ QLabel {background-color: transparent;}</string>
                  </widget>
                 </item>
                 <item>
-                 <widget class="CompactSpinBox" name="cust_port">
+                 <widget class="QSpinBox" name="cust_port">
                   <property name="enabled">
                    <bool>false</bool>
                   </property>
