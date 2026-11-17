@@ -171,6 +171,19 @@ push/PR 自动触发测试；手动工作流在测试通过后生成构建产物
 
 ## 开发与维护
 
+### 提交身份
+
+使用已登录的 GitHub CLI 账号创建提交，无需在脚本或仓库中填写个人姓名、邮箱：
+
+```bash
+gh auth status --hostname github.com
+git add <要提交的文件>
+python scripts/git_commit.py -m "说明本次改动"
+git push
+```
+
+每次执行都会从 GitHub 查询当前账号，以账号用户名和 `ID+用户名@users.noreply.github.com` 设置本次提交的作者及提交者。身份仅通过该进程的环境变量传递，不改写全局 Git 配置；查询失败时停止提交。切换 `gh` 当前账号后，下次提交自动采用新身份。历史提交的身份不会随账号切换改变。
+
 - [上游 issues / PR 调研及整合记录](docs/UPSTREAM_REVIEW.md)
 - [组件与验证记录](docs/VALIDATION.md)
 - [后续更新优化方案](docs/ROADMAP.md)：真机验收 → 连接与架构优化 → 界面与性能优化
